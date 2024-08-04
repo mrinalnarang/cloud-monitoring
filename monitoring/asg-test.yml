@@ -1,0 +1,248 @@
+import boto3
+import json
+from datetime import datetime, timedelta
+
+# Initialize clients
+autoscaling_client = boto3.client('autoscaling')
+cloudwatch_client = boto3.client('cloudwatch')
+cloudtrail_client = boto3.client('cloudtrail')
+
+def lambda_handler(event, context):
+    # Log the entire event for debugging
+    print("Received event: " + json.dumps(event, indent=2))
+    
+    # Extract the Auto Scaling group name from the event
+    detail = event.get('requestParameters', {})
+    group_name = detail.get('autoScalingGroupName')
+    
+    if not group_name:
+        print("Auto Scaling group name not found in event.")
+        return
+    
+    print(f"Auto Scaling group name found: {group_name}")
+    
+    # Get the current configuration of the Auto Scaling group
+    response = autoscaling_client.describe_auto_scaling_groups(
+        AutoScalingGroupNames=[group_name]
+    )
+    
+    if not response['AutoScalingGroups']:
+        print("Auto Scaling group not found.")
+        return
+    
+    auto_scaling_group = response['AutoScalingGroups'][0]
+    max_size = auto_scaling_group['MaxSize']
+    
+    print(f"Auto Scaling group max size: {max_size}")
+    
+    # Calculate 80% of the maximum size
+    new_threshold = max_size * 0.8
+    
+    # Retrieve CloudTrail events
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(hours=1)
+    
+    try:
+        trail_response = cloudtrail_client.lookup_events(
+            LookupAttributes=[
+                {
+                    'AttributeKey': 'EventName',
+                    'AttributeValue': 'UpdateAutoScalingGroup'
+                }
+            ],
+            StartTime=start_time,
+            EndTime=end_time
+        )
+        
+        events = trail_response.get('Events', [])
+        
+        if not events:
+            print("No CloudTrail events found.")
+            return
+        
+        # Filter events to find the relevant ones
+        for event in events:
+            event_detail = json.loads(event['CloudTrailEvent'])
+            request_parameters = event_detail.get('requestParameters', {})
+            event_group_name = request_parameters.get('autoScalingGroupName')
+            
+            if event_group_name == group_name:
+                print(f"Found relevant event for group {group_name}")
+                # Fetch all alarms and filter by dimension
+                alarms = []
+                next_token = None
+                while True:
+                    if next_token:
+                        alarm_response = cloudwatch_client.describe_alarms(
+                            NextToken=next_token
+                        )
+                    else:
+                        alarm_response = cloudwatch_client.describe_alarms()
+                    
+                    alarms.extend(alarm_response['MetricAlarms'])
+                    next_token = alarm_response.get('NextToken')
+                    
+                    if not next_token:
+                        break
+
+                filtered_alarms = [
+                    alarm for alarm in alarms 
+                    if any(d.get('Name') == 'AutoScalingGroupName' and d.get('Value') == group_name for d in alarm.get('Dimensions', []))
+                ]
+                
+                if not filtered_alarms:
+                    print(f"No alarms found for Auto Scaling group: {group_name}.")
+                    return
+                
+                for alarm in filtered_alarms:
+                    alarm_name = alarm['AlarmName']
+                    print(f"Updating alarm {alarm_name} with new threshold {new_threshold}")
+                    
+                    try:
+                        update_params = {
+                            'AlarmName': alarm_name,
+                            'MetricName': alarm['MetricName'],
+                            'Namespace': alarm['Namespace'],
+                            'Statistic': alarm['Statistic'],
+                            'Period': alarm['Period'],
+                            'EvaluationPeriods': alarm['EvaluationPeriods'],
+                            'Threshold': new_threshold,
+                            'ComparisonOperator': alarm['ComparisonOperator'],
+                            'AlarmActions': alarm['AlarmActions'],
+                            'Dimensions': alarm['Dimensions']
+                        }
+                        
+                        if 'Unit' in alarm:
+                            update_params['Unit'] = alarm['Unit']
+                        
+                        cloudwatch_client.put_metric_alarm(**update_params)
+                        print(f"Updated alarm {alarm_name} with new threshold {new_threshold}")
+                    except Exception as e:
+                        print(f"Error updating alarm {alarm_name}: {e}")
+                
+    except Exception as e:
+        print(f"Error retrieving CloudTrail events: {e}")
+import boto3
+import json
+from datetime import datetime, timedelta
+
+# Initialize clients
+autoscaling_client = boto3.client('autoscaling')
+cloudwatch_client = boto3.client('cloudwatch')
+cloudtrail_client = boto3.client('cloudtrail')
+
+def lambda_handler(event, context):
+    # Log the entire event for debugging
+    print("Received event: " + json.dumps(event, indent=2))
+    
+    # Extract the Auto Scaling group name from the event
+    detail = event.get('requestParameters', {})
+    group_name = detail.get('autoScalingGroupName')
+    
+    if not group_name:
+        print("Auto Scaling group name not found in event.")
+        return
+    
+    print(f"Auto Scaling group name found: {group_name}")
+    
+    # Get the current configuration of the Auto Scaling group
+    response = autoscaling_client.describe_auto_scaling_groups(
+        AutoScalingGroupNames=[group_name]
+    )
+    
+    if not response['AutoScalingGroups']:
+        print("Auto Scaling group not found.")
+        return
+    
+    auto_scaling_group = response['AutoScalingGroups'][0]
+    max_size = auto_scaling_group['MaxSize']
+    
+    print(f"Auto Scaling group max size: {max_size}")
+    
+    # Calculate 80% of the maximum size
+    new_threshold = max_size * 0.8
+    
+    # Retrieve CloudTrail events
+    end_time = datetime.utcnow()
+    start_time = end_time - timedelta(hours=1)
+    
+    try:
+        trail_response = cloudtrail_client.lookup_events(
+            LookupAttributes=[
+                {
+                    'AttributeKey': 'EventName',
+                    'AttributeValue': 'UpdateAutoScalingGroup'
+                }
+            ],
+            StartTime=start_time,
+            EndTime=end_time
+        )
+        
+        events = trail_response.get('Events', [])
+        
+        if not events:
+            print("No CloudTrail events found.")
+            return
+        
+        # Filter events to find the relevant ones
+        for event in events:
+            event_detail = json.loads(event['CloudTrailEvent'])
+            request_parameters = event_detail.get('requestParameters', {})
+            event_group_name = request_parameters.get('autoScalingGroupName')
+            
+            if event_group_name == group_name:
+                print(f"Found relevant event for group {group_name}")
+                # Fetch all alarms and filter by dimension
+                alarms = []
+                next_token = None
+                while True:
+                    if next_token:
+                        alarm_response = cloudwatch_client.describe_alarms(
+                            NextToken=next_token
+                        )
+                    else:
+                        alarm_response = cloudwatch_client.describe_alarms()
+                    
+                    alarms.extend(alarm_response['MetricAlarms'])
+                    next_token = alarm_response.get('NextToken')
+                    
+                    if not next_token:
+                        break
+
+                filtered_alarms = [
+                    alarm for alarm in alarms 
+                    if any(d.get('Name') == 'AutoScalingGroupName' and d.get('Value') == group_name for d in alarm.get('Dimensions', []))
+                ]
+                
+                if not filtered_alarms:
+                    print(f"No alarms found for Auto Scaling group: {group_name}.")
+                    return
+                
+                for alarm in filtered_alarms:
+                    alarm_name = alarm['AlarmName']
+                    print(f"Updating alarm {alarm_name} with new threshold {new_threshold}")
+                    
+                    try:
+                        update_params = {
+                            'AlarmName': alarm_name,
+                            'MetricName': alarm['MetricName'],
+                            'Namespace': alarm['Namespace'],
+                            'Statistic': alarm['Statistic'],
+                            'Period': alarm['Period'],
+                            'EvaluationPeriods': alarm['EvaluationPeriods'],
+                            'Threshold': new_threshold,
+                            'ComparisonOperator': alarm['ComparisonOperator'],
+                            'AlarmActions': alarm['AlarmActions'],
+                            'Dimensions': alarm['Dimensions']
+                        }
+                        
+                        if 'Unit' in alarm:
+                            update_params['Unit'] = alarm['Unit']
+                        
+                        cloudwatch_client.put_metric_alarm(**update_params)
+                        print(f"Updated alarm {alarm_name} with new threshold {new_threshold}")
+                    except Exception as e:
+                        print(f"Error updating alarm {alarm_name}: {e}")
+                
+    except Exception as e:
+        print(f"Error retrieving CloudTrail events: {e}")
