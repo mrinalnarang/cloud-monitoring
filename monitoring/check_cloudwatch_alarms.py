@@ -1,148 +1,137 @@
-import boto3
 import csv
+import os
+from typing import Callable, Dict, List
 
-# Initialize the CloudWatch and EC2 clients with the region specified
-cloudwatch = boto3.client('cloudwatch', region_name='us-east-1')
-ec2 = boto3.client('ec2', region_name='us-east-1')
-elbv2 = boto3.client('elbv2', region_name='us-east-1')
-rds = boto3.client('rds', region_name='us-east-1')
-elasticache = boto3.client('elasticache', region_name='us-east-1')
-autoscaling = boto3.client('autoscaling', region_name='us-east-1')
-lambda_client = boto3.client('lambda', region_name='us-east-1')
+import boto3
 
-# Define the metrics for each resource type
-resource_metrics = {
-    'EC2': [
-        'CPUUtilization', 'DiskUsedPercent', 'MemoryUsedPercent', 'StatusCheckFailed'
-    ],
-    'LoadBalancer': [
-        'HTTPCode_ELB_4XX_Count', 'HTTPCode_Target_5XX_Count', 'RequestCount'
-    ],
-    'TargetGroup': [
-        'UnHealthyHostCount', 'RequestCount', 'TargetResponseTime'
-    ],
-    'RDS': [
-        'CPUUtilization', 'DatabaseConnections', 'FreeableMemory'
-    ],
-    'ElasticCache': [
-        'CPUUtilization', 'CurrConnections', 'FreeableMemory'
-    ],
-    'AutoScalingGroup': [
-        'Fail to launch EC2 instance'
-    ],
-    'Lambda': [
-        'Throttles', 'Errors', 'Invocations'
-    ]
+REGION = os.getenv("AWS_REGION", "us-east-1")
+
+cloudwatch = boto3.client("cloudwatch", region_name=REGION)
+ec2 = boto3.client("ec2", region_name=REGION)
+elbv2 = boto3.client("elbv2", region_name=REGION)
+rds = boto3.client("rds", region_name=REGION)
+elasticache = boto3.client("elasticache", region_name=REGION)
+autoscaling = boto3.client("autoscaling", region_name=REGION)
+lambda_client = boto3.client("lambda", region_name=REGION)
+
+RESOURCE_METRICS = {
+    "EC2": ["CPUUtilization", "DiskUsedPercent", "MemoryUsedPercent", "StatusCheckFailed"],
+    "LoadBalancer": ["HTTPCode_ELB_4XX_Count", "HTTPCode_Target_5XX_Count", "RequestCount"],
+    "TargetGroup": ["UnHealthyHostCount", "RequestCount", "TargetResponseTime"],
+    "RDS": ["CPUUtilization", "DatabaseConnections", "FreeableMemory"],
+    "ElasticCache": ["CPUUtilization", "CurrConnections", "FreeableMemory"],
+    "AutoScalingGroup": ["Fail to launch EC2 instance"],
+    "Lambda": ["Throttles", "Errors", "Invocations"],
 }
 
-def get_running_instances():
-    response = ec2.describe_instances()
-    instances = []
-    for reservation in response['Reservations']:
-        for instance in reservation['Instances']:
-            instances.append(instance['InstanceId'])
-    return instances
 
-def get_load_balancers():
-    response = elbv2.describe_load_balancers()
-    load_balancers = [lb['LoadBalancerArn'] for lb in response['LoadBalancers']]
-    return load_balancers
+def get_running_instances() -> List[str]:
+    paginator = ec2.get_paginator("describe_instances")
+    return [
+        instance["InstanceId"]
+        for page in paginator.paginate()
+        for reservation in page["Reservations"]
+        for instance in reservation["Instances"]
+    ]
 
-def get_target_groups():
-    response = elbv2.describe_target_groups()
-    target_groups = [tg['TargetGroupArn'] for tg in response['TargetGroups']]
-    return target_groups
 
-def get_rds_instances():
-    response = rds.describe_db_instances()
-    rds_instances = [db['DBInstanceIdentifier'] for db in response['DBInstances']]
-    return rds_instances
+def get_load_balancers() -> List[str]:
+    paginator = elbv2.get_paginator("describe_load_balancers")
+    return [lb["LoadBalancerArn"] for page in paginator.paginate() for lb in page["LoadBalancers"]]
 
-def get_elasticache_clusters():
-    response = elasticache.describe_cache_clusters()
-    elasticache_clusters = [cache['CacheClusterId'] for cache in response['CacheClusters']]
-    return elasticache_clusters
 
-def get_auto_scaling_groups():
-    response = autoscaling.describe_auto_scaling_groups()
-    auto_scaling_groups = [asg['AutoScalingGroupName'] for asg in response['AutoScalingGroups']]
-    return auto_scaling_groups
+def get_target_groups() -> List[str]:
+    paginator = elbv2.get_paginator("describe_target_groups")
+    return [tg["TargetGroupArn"] for page in paginator.paginate() for tg in page["TargetGroups"]]
 
-def get_lambda_functions():
-    response = lambda_client.list_functions()
-    lambda_functions = [func['FunctionName'] for func in response['Functions']]
-    return lambda_functions
 
-def get_existing_alarms():
-    alarms = []
-    paginator = cloudwatch.get_paginator('describe_alarms')
+def get_rds_instances() -> List[str]:
+    paginator = rds.get_paginator("describe_db_instances")
+    return [db["DBInstanceIdentifier"] for page in paginator.paginate() for db in page["DBInstances"]]
+
+
+def get_elasticache_clusters() -> List[str]:
+    paginator = elasticache.get_paginator("describe_cache_clusters")
+    return [cache["CacheClusterId"] for page in paginator.paginate() for cache in page["CacheClusters"]]
+
+
+def get_auto_scaling_groups() -> List[str]:
+    paginator = autoscaling.get_paginator("describe_auto_scaling_groups")
+    return [asg["AutoScalingGroupName"] for page in paginator.paginate() for asg in page["AutoScalingGroups"]]
+
+
+def get_lambda_functions() -> List[str]:
+    paginator = lambda_client.get_paginator("list_functions")
+    return [func["FunctionName"] for page in paginator.paginate() for func in page["Functions"]]
+
+
+def get_existing_alarms() -> List[Dict[str, str]]:
+    alarms: List[Dict[str, str]] = []
+    paginator = cloudwatch.get_paginator("describe_alarms")
     for page in paginator.paginate():
-        for alarm in page['MetricAlarms']:
-            alarms.append({
-                'AlarmName': alarm['AlarmName'],
-                'MetricName': alarm['MetricName'],
-                'ResourceID': alarm['Dimensions'][0]['Value'],
-                'ResourceName': alarm['Dimensions'][0]['Name'],
-                'State': alarm['StateValue']
-            })
+        for alarm in page.get("MetricAlarms", []):
+            dimensions = alarm.get("Dimensions", [])
+            resource_dimension = dimensions[0] if dimensions else {"Name": "N/A", "Value": "N/A"}
+            alarms.append(
+                {
+                    "AlarmName": alarm["AlarmName"],
+                    "MetricName": alarm["MetricName"],
+                    "ResourceID": resource_dimension["Value"],
+                    "ResourceName": resource_dimension["Name"],
+                    "State": alarm["StateValue"],
+                }
+            )
     return alarms
 
-def check_metrics(alarms):
+
+def check_metrics(alarms: List[Dict[str, str]]):
     results = []
     no_alarms = []
 
-    for resource_type, metrics in resource_metrics.items():
-        if resource_type == 'EC2':
-            resources = get_running_instances()
-        elif resource_type == 'LoadBalancer':
-            resources = get_load_balancers()
-        elif resource_type == 'TargetGroup':
-            resources = get_target_groups()
-        elif resource_type == 'RDS':
-            resources = get_rds_instances()
-        elif resource_type == 'ElasticCache':
-            resources = get_elasticache_clusters()
-        elif resource_type == 'AutoScalingGroup':
-            resources = get_auto_scaling_groups()
-        elif resource_type == 'Lambda':
-            resources = get_lambda_functions()
+    resource_getters: Dict[str, Callable[[], List[str]]] = {
+        "EC2": get_running_instances,
+        "LoadBalancer": get_load_balancers,
+        "TargetGroup": get_target_groups,
+        "RDS": get_rds_instances,
+        "ElasticCache": get_elasticache_clusters,
+        "AutoScalingGroup": get_auto_scaling_groups,
+        "Lambda": get_lambda_functions,
+    }
 
+    for resource_type, metrics in RESOURCE_METRICS.items():
+        resources = resource_getters[resource_type]()
         for metric_name in metrics:
             for resource in resources:
                 alarms_found = any(
-                    alarm['MetricName'] == metric_name and
-                    alarm['ResourceID'] == resource
-                    for alarm in alarms
+                    alarm["MetricName"] == metric_name and alarm["ResourceID"] == resource for alarm in alarms
                 )
-                if alarms_found:
-                    results.append({
-                        'ResourceType': resource_type,
-                        'ResourceID': resource,
-                        'MetricName': metric_name,
-                        'Status': 'Alarm Present'
-                    })
-                else:
-                    no_alarms.append({
-                        'ResourceType': resource_type,
-                        'ResourceID': resource,
-                        'MetricName': metric_name,
-                        'Status': 'No Alarm'
-                    })
+                target = results if alarms_found else no_alarms
+                target.append(
+                    {
+                        "ResourceType": resource_type,
+                        "ResourceID": resource,
+                        "MetricName": metric_name,
+                        "Status": "Alarm Present" if alarms_found else "No Alarm",
+                    }
+                )
 
     return results, no_alarms
 
-def write_to_csv(results, no_alarms):
-    with open('cloudwatch_alarms_check.csv', 'w', newline='') as file:
-        writer = csv.DictWriter(file, fieldnames=['ResourceType', 'ResourceID', 'MetricName', 'Status'])
+
+def write_to_csv(results, no_alarms) -> None:
+    with open("cloudwatch_alarms_check.csv", "w", newline="", encoding="utf-8") as file:
+        writer = csv.DictWriter(file, fieldnames=["ResourceType", "ResourceID", "MetricName", "Status"])
         writer.writeheader()
         writer.writerows(results)
         writer.writerows(no_alarms)
 
-def main():
+
+def main() -> None:
     alarms = get_existing_alarms()
     results, no_alarms = check_metrics(alarms)
     write_to_csv(results, no_alarms)
     print("Report generated: cloudwatch_alarms_check.csv")
+
 
 if __name__ == "__main__":
     main()

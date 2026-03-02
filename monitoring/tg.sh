@@ -1,4 +1,5 @@
 #!/bin/sh
+set -eu
 
 #set -ex
 
@@ -34,28 +35,28 @@ getLoadBalancerDetails() {
     # Loop through each load balancer ARN to find the associated one
     for lb_arn in $load_balancer_arns; do
         # Get all listeners for the current load balancer
-        listeners=$(aws elbv2 describe-listeners --load-balancer-arn $lb_arn --region "$REGION" --query 'Listeners[*].ListenerArn' --output text)
+        listeners=$(aws elbv2 describe-listeners --load-balancer-arn "$lb_arn" --region "$REGION" --query 'Listeners[*].ListenerArn' --output text)
         # Loop through each listener to check the DefaultActions and Rules
         for listener_arn in $listeners; do
             # Check if the target group ARN is associated with this listener's default actions
-            associated_lb=$(aws elbv2 describe-listeners --listener-arn $listener_arn --region "$REGION" --query "Listeners[?DefaultActions[?TargetGroupArn=='$full_target_group_arn']].LoadBalancerArn" --output text)
+            associated_lb=$(aws elbv2 describe-listeners --listener-arn "$listener_arn" --region "$REGION" --query "Listeners[?DefaultActions[?TargetGroupArn=='$full_target_group_arn']].LoadBalancerArn" --output text)
 
             if [ -n "$associated_lb" ]; then
                 # Print the associated load balancer ARN
                 echo "Associated Load Balancer ARN: $associated_lb"
                 # Describe the load balancer to get more details
-                lb_details=$(aws elbv2 describe-load-balancers --load-balancer-arns $associated_lb --region "$REGION" --query 'LoadBalancers[*].LoadBalancerArn' --output text)
+                lb_details=$(aws elbv2 describe-load-balancers --load-balancer-arns "$associated_lb" --region "$REGION" --query 'LoadBalancers[*].LoadBalancerArn' --output text)
             fi
 
             # Get all rules for the current listener
-            listener_rules=$(aws elbv2 describe-rules --listener-arn $listener_arn --region "$REGION" --query 'Rules[*].Actions[*].TargetGroupArn' --output text)
+            listener_rules=$(aws elbv2 describe-rules --listener-arn "$listener_arn" --region "$REGION" --query 'Rules[*].Actions[*].TargetGroupArn' --output text)
 
             for rule_tg_arn in $listener_rules; do
-                if [ "$rule_tg_arn" == "$full_target_group_arn" ]; then
+                if [ "$rule_tg_arn" = "$full_target_group_arn" ]; then
                     # Print the associated load balancer ARN
                     #echo "Associated Load Balancer ARN: $lb_arn"
                     # Describe the load balancer to get more details
-                    lb_details=$(aws elbv2 describe-load-balancers --load-balancer-arns $lb_arn --region "$REGION" --query 'LoadBalancers[*].LoadBalancerArn' --output text)
+                    lb_details=$(aws elbv2 describe-load-balancers --load-balancer-arns "$lb_arn" --region "$REGION" --query 'LoadBalancers[*].LoadBalancerArn' --output text)
                     echo "Load Balancer Details: $lb_details"
                 fi
             done
